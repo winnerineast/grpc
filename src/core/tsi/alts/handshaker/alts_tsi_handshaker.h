@@ -37,22 +37,7 @@
 
 const size_t kTsiAltsNumOfPeerProperties = 3;
 
-typedef struct alts_handshaker_client alts_handshaker_client;
-/**
- * Main struct for ALTS TSI handshaker. All APIs in the header are
- * thread-comptabile.
- */
-struct alts_tsi_handshaker {
-  tsi_handshaker base;
-  alts_handshaker_client* client;
-  grpc_slice recv_bytes;
-  grpc_slice target_name;
-  unsigned char* buffer;
-  size_t buffer_size;
-  bool is_client;
-  bool has_sent_start_message;
-  grpc_alts_credentials_options* options;
-};
+typedef struct alts_tsi_handshaker alts_tsi_handshaker;
 
 /**
  * This method creates a ALTS TSI handshaker instance.
@@ -77,25 +62,6 @@ tsi_result alts_tsi_handshaker_create(
     grpc_pollset_set* interested_parties, tsi_handshaker** self);
 
 /**
- * This method handles handshaker response returned from ALTS handshaker
- * service.
- *
- * - handshaker: ALTS TSI handshaker instance.
- * - recv_buffer: buffer holding data received from the handshaker service.
- * - status: status of the grpc call made to the handshaker service.
- * - cb: callback function to handle response received from the handshaker
- *   service.
- * - user_data: argument of callback function.
- * - is_ok: a boolean value indicating if the handshaker response is ok to read.
- *
- */
-void alts_tsi_handshaker_handle_response(alts_tsi_handshaker* handshaker,
-                                         grpc_byte_buffer* recv_buffer,
-                                         grpc_status_code status,
-                                         tsi_handshaker_on_next_done_cb cb,
-                                         void* user_data, bool is_ok);
-
-/**
  * This method creates an ALTS TSI handshaker result instance.
  *
  * - resp: data received from the handshaker service.
@@ -117,5 +83,11 @@ tsi_result alts_tsi_handshaker_result_create(grpc_gcp_handshaker_resp* resp,
 void alts_tsi_handshaker_result_set_unused_bytes(tsi_handshaker_result* result,
                                                  grpc_slice* recv_bytes,
                                                  size_t bytes_consumed);
+
+/**
+ * This method returns a boolean value indicating if an ALTS TSI handshaker
+ * has been shutdown or not.
+ */
+bool alts_tsi_handshaker_has_shutdown(alts_tsi_handshaker* handshaker);
 
 #endif /* GRPC_CORE_TSI_ALTS_HANDSHAKER_ALTS_TSI_HANDSHAKER_H */

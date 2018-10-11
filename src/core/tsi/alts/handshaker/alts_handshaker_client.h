@@ -28,6 +28,7 @@
 #include "src/core/tsi/alts/handshaker/alts_tsi_handshaker.h"
 #include "src/core/tsi/transport_security_interface.h"
 
+#include "src/core/lib/iomgr/closure.h"
 #include "src/core/lib/iomgr/pollset_set.h"
 
 #define ALTS_SERVICE_METHOD "/grpc.gcp.HandshakerService/DoHandshake"
@@ -118,16 +119,19 @@ void alts_handshaker_client_destroy(alts_handshaker_client* client);
  * - handshaker_service_url: address of ALTS handshaker service in the format of
  *   "host:port".
  * - interested_parties: set of pollsets interested in this connection.
- * It returns the created ALTS handshaker client on success, and NULL on
- * failure.
+ * - cb: gRPC provided callbacks passed from TSI handshaker.
+ * - is_client: a boolean value indicating if the created handshaker client is
+ * used at the client side or not. It returns the created ALTS handshaker client
+ * on success, and NULL on failure.
  */
 alts_handshaker_client* alts_grpc_handshaker_client_create(
     grpc_channel* channel, const char* handshaker_service_url,
-    grpc_pollset_set* interested_parties);
+    grpc_pollset_set* interested_parties, grpc_iomgr_cb_func cb,
+    bool is_client);
 
 /**
- * This method returns whether or not an ALTS handshaker client has been
- * initialized.
+ * This method returns a boolean value indicating whether or not an ALTS
+ * handshaker client has been initialized.
  *
  * - client: an ALTS handshaker client instance.
  */
@@ -165,22 +169,8 @@ void alts_handshaker_client_buffer_destroy(alts_handshaker_client* client);
  *
  * - client: an ALTS handshaker client instance.
  * - is_ok: a boolean value indicating if the handshaker response is ok to read.
- *
  */
-void alts_tsi_handshaker_handle_response(alts_handshaker_client* client,
-                                         bool is_ok);
-
-namespace grpc_core {
-namespace internal {
-
-/**
- * Unsafe, use for testing only. It allows the caller to change the way that
- * GRPC calls are made to the handshaker service.
- */
-void alts_handshaker_client_set_grpc_caller_for_testing(
-    alts_handshaker_client* client, alts_grpc_caller caller);
-
-}  // namespace internal
-}  // namespace grpc_core
+void alts_handshaker_client_handle_response(alts_handshaker_client* client,
+                                            bool is_ok);
 
 #endif /* GRPC_CORE_TSI_ALTS_HANDSHAKER_ALTS_HANDSHAKER_CLIENT_H */
