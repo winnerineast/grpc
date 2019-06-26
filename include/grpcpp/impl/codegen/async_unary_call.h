@@ -22,14 +22,13 @@
 #include <assert.h>
 #include <grpcpp/impl/codegen/call.h>
 #include <grpcpp/impl/codegen/channel_interface.h>
-#include <grpcpp/impl/codegen/client_context.h>
-#include <grpcpp/impl/codegen/server_context.h>
+#include <grpcpp/impl/codegen/client_context_impl.h>
+#include <grpcpp/impl/codegen/server_context_impl.h>
 #include <grpcpp/impl/codegen/service_type.h>
 #include <grpcpp/impl/codegen/status.h>
 
 namespace grpc {
 
-class CompletionQueue;
 extern CoreCodegenInterface* g_core_codegen_interface;
 
 /// An interface relevant for async client side unary RPCs (which send
@@ -81,9 +80,9 @@ class ClientAsyncResponseReaderFactory {
   /// used to send to the server when starting the call.
   template <class W>
   static ClientAsyncResponseReader<R>* Create(
-      ChannelInterface* channel, CompletionQueue* cq,
-      const ::grpc::internal::RpcMethod& method, ClientContext* context,
-      const W& request, bool start) {
+      ChannelInterface* channel, ::grpc_impl::CompletionQueue* cq,
+      const ::grpc::internal::RpcMethod& method,
+      ::grpc_impl::ClientContext* context, const W& request, bool start) {
     ::grpc::internal::Call call = channel->CreateCall(method, context, cq);
     return new (g_core_codegen_interface->grpc_call_arena_alloc(
         call.call(), sizeof(ClientAsyncResponseReader<R>)))
@@ -157,13 +156,14 @@ class ClientAsyncResponseReader final
 
  private:
   friend class internal::ClientAsyncResponseReaderFactory<R>;
-  ClientContext* const context_;
+  ::grpc_impl::ClientContext* const context_;
   ::grpc::internal::Call call_;
   bool started_;
   bool initial_metadata_read_ = false;
 
   template <class W>
-  ClientAsyncResponseReader(::grpc::internal::Call call, ClientContext* context,
+  ClientAsyncResponseReader(::grpc::internal::Call call,
+                            ::grpc_impl::ClientContext* context,
                             const W& request, bool start)
       : context_(context), call_(call), started_(start) {
     // Bind the metadata at time of StartCallInternal but set up the rest here
@@ -174,7 +174,7 @@ class ClientAsyncResponseReader final
   }
 
   void StartCallInternal() {
-    single_buf.SendInitialMetadata(context_->send_initial_metadata_,
+    single_buf.SendInitialMetadata(&context_->send_initial_metadata_,
                                    context_->initial_metadata_flags());
   }
 
@@ -200,7 +200,7 @@ template <class W>
 class ServerAsyncResponseWriter final
     : public internal::ServerAsyncStreamingInterface {
  public:
-  explicit ServerAsyncResponseWriter(ServerContext* ctx)
+  explicit ServerAsyncResponseWriter(::grpc_impl::ServerContext* ctx)
       : call_(nullptr, nullptr, nullptr), ctx_(ctx) {}
 
   /// See \a ServerAsyncStreamingInterface::SendInitialMetadata for semantics.
@@ -214,7 +214,7 @@ class ServerAsyncResponseWriter final
     GPR_CODEGEN_ASSERT(!ctx_->sent_initial_metadata_);
 
     meta_buf_.set_output_tag(tag);
-    meta_buf_.SendInitialMetadata(ctx_->initial_metadata_,
+    meta_buf_.SendInitialMetadata(&ctx_->initial_metadata_,
                                   ctx_->initial_metadata_flags());
     if (ctx_->compression_level_set()) {
       meta_buf_.set_compression_level(ctx_->compression_level());
@@ -240,8 +240,9 @@ class ServerAsyncResponseWriter final
   /// metadata.
   void Finish(const W& msg, const Status& status, void* tag) {
     finish_buf_.set_output_tag(tag);
+    finish_buf_.set_core_cq_tag(&finish_buf_);
     if (!ctx_->sent_initial_metadata_) {
-      finish_buf_.SendInitialMetadata(ctx_->initial_metadata_,
+      finish_buf_.SendInitialMetadata(&ctx_->initial_metadata_,
                                       ctx_->initial_metadata_flags());
       if (ctx_->compression_level_set()) {
         finish_buf_.set_compression_level(ctx_->compression_level());
@@ -250,10 +251,10 @@ class ServerAsyncResponseWriter final
     }
     // The response is dropped if the status is not OK.
     if (status.ok()) {
-      finish_buf_.ServerSendStatus(ctx_->trailing_metadata_,
+      finish_buf_.ServerSendStatus(&ctx_->trailing_metadata_,
                                    finish_buf_.SendMessage(msg));
     } else {
-      finish_buf_.ServerSendStatus(ctx_->trailing_metadata_, status);
+      finish_buf_.ServerSendStatus(&ctx_->trailing_metadata_, status);
     }
     call_.PerformOps(&finish_buf_);
   }
@@ -274,14 +275,14 @@ class ServerAsyncResponseWriter final
     GPR_CODEGEN_ASSERT(!status.ok());
     finish_buf_.set_output_tag(tag);
     if (!ctx_->sent_initial_metadata_) {
-      finish_buf_.SendInitialMetadata(ctx_->initial_metadata_,
+      finish_buf_.SendInitialMetadata(&ctx_->initial_metadata_,
                                       ctx_->initial_metadata_flags());
       if (ctx_->compression_level_set()) {
         finish_buf_.set_compression_level(ctx_->compression_level());
       }
       ctx_->sent_initial_metadata_ = true;
     }
-    finish_buf_.ServerSendStatus(ctx_->trailing_metadata_, status);
+    finish_buf_.ServerSendStatus(&ctx_->trailing_metadata_, status);
     call_.PerformOps(&finish_buf_);
   }
 
@@ -289,7 +290,7 @@ class ServerAsyncResponseWriter final
   void BindCall(::grpc::internal::Call* call) override { call_ = *call; }
 
   ::grpc::internal::Call call_;
-  ServerContext* ctx_;
+  ::grpc_impl::ServerContext* ctx_;
   ::grpc::internal::CallOpSet<::grpc::internal::CallOpSendInitialMetadata>
       meta_buf_;
   ::grpc::internal::CallOpSet<::grpc::internal::CallOpSendInitialMetadata,

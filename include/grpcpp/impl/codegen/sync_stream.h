@@ -21,10 +21,10 @@
 
 #include <grpcpp/impl/codegen/call.h>
 #include <grpcpp/impl/codegen/channel_interface.h>
-#include <grpcpp/impl/codegen/client_context.h>
+#include <grpcpp/impl/codegen/client_context_impl.h>
 #include <grpcpp/impl/codegen/completion_queue.h>
 #include <grpcpp/impl/codegen/core_codegen_interface.h>
-#include <grpcpp/impl/codegen/server_context.h>
+#include <grpcpp/impl/codegen/server_context_impl.h>
 #include <grpcpp/impl/codegen/service_type.h>
 #include <grpcpp/impl/codegen/status.h>
 
@@ -163,7 +163,8 @@ class ClientReaderFactory {
   template <class W>
   static ClientReader<R>* Create(ChannelInterface* channel,
                                  const ::grpc::internal::RpcMethod& method,
-                                 ClientContext* context, const W& request) {
+                                 ::grpc_impl::ClientContext* context,
+                                 const W& request) {
     return new ClientReader<R>(channel, method, context, request);
   }
 };
@@ -180,7 +181,7 @@ class ClientReader final : public ClientReaderInterface<R> {
   ///
   //  Side effect:
   ///   Once complete, the initial metadata read from
-  ///   the server will be accessable through the \a ClientContext used to
+  ///   the server will be accessible through the \a ClientContext used to
   ///   construct this object.
   void WaitForInitialMetadata() override {
     GPR_CODEGEN_ASSERT(!context_->initial_metadata_received_);
@@ -230,8 +231,8 @@ class ClientReader final : public ClientReaderInterface<R> {
 
  private:
   friend class internal::ClientReaderFactory<R>;
-  ClientContext* context_;
-  CompletionQueue cq_;
+  ::grpc_impl::ClientContext* context_;
+  ::grpc_impl::CompletionQueue cq_;
   ::grpc::internal::Call call_;
 
   /// Block to create a stream and write the initial metadata and \a request
@@ -240,7 +241,7 @@ class ClientReader final : public ClientReaderInterface<R> {
   template <class W>
   ClientReader(::grpc::ChannelInterface* channel,
                const ::grpc::internal::RpcMethod& method,
-               ClientContext* context, const W& request)
+               ::grpc_impl::ClientContext* context, const W& request)
       : context_(context),
         cq_(grpc_completion_queue_attributes{
             GRPC_CQ_CURRENT_VERSION, GRPC_CQ_PLUCK, GRPC_CQ_DEFAULT_POLLING,
@@ -250,10 +251,10 @@ class ClientReader final : public ClientReaderInterface<R> {
                                 ::grpc::internal::CallOpSendMessage,
                                 ::grpc::internal::CallOpClientSendClose>
         ops;
-    ops.SendInitialMetadata(context->send_initial_metadata_,
+    ops.SendInitialMetadata(&context->send_initial_metadata_,
                             context->initial_metadata_flags());
     // TODO(ctiller): don't assert
-    GPR_CODEGEN_ASSERT(ops.SendMessage(request).ok());
+    GPR_CODEGEN_ASSERT(ops.SendMessagePtr(&request).ok());
     ops.ClientSendClose();
     call_.PerformOps(&ops);
     cq_.Pluck(&ops);
@@ -281,7 +282,8 @@ class ClientWriterFactory {
   template <class R>
   static ClientWriter<W>* Create(::grpc::ChannelInterface* channel,
                                  const ::grpc::internal::RpcMethod& method,
-                                 ClientContext* context, R* response) {
+                                 ::grpc_impl::ClientContext* context,
+                                 R* response) {
     return new ClientWriter<W>(channel, method, context, response);
   }
 };
@@ -298,7 +300,7 @@ class ClientWriter : public ClientWriterInterface<W> {
   ///
   //  Side effect:
   ///   Once complete, the initial metadata read from the server will be
-  ///   accessable through the \a ClientContext used to construct this object.
+  ///   accessible through the \a ClientContext used to construct this object.
   void WaitForInitialMetadata() {
     GPR_CODEGEN_ASSERT(!context_->initial_metadata_received_);
 
@@ -327,11 +329,11 @@ class ClientWriter : public ClientWriterInterface<W> {
       ops.ClientSendClose();
     }
     if (context_->initial_metadata_corked_) {
-      ops.SendInitialMetadata(context_->send_initial_metadata_,
+      ops.SendInitialMetadata(&context_->send_initial_metadata_,
                               context_->initial_metadata_flags());
       context_->set_initial_metadata_corked(false);
     }
-    if (!ops.SendMessage(msg, options).ok()) {
+    if (!ops.SendMessagePtr(&msg, options).ok()) {
       return false;
     }
 
@@ -374,7 +376,7 @@ class ClientWriter : public ClientWriterInterface<W> {
   template <class R>
   ClientWriter(ChannelInterface* channel,
                const ::grpc::internal::RpcMethod& method,
-               ClientContext* context, R* response)
+               ::grpc_impl::ClientContext* context, R* response)
       : context_(context),
         cq_(grpc_completion_queue_attributes{
             GRPC_CQ_CURRENT_VERSION, GRPC_CQ_PLUCK, GRPC_CQ_DEFAULT_POLLING,
@@ -386,19 +388,19 @@ class ClientWriter : public ClientWriterInterface<W> {
     if (!context_->initial_metadata_corked_) {
       ::grpc::internal::CallOpSet<::grpc::internal::CallOpSendInitialMetadata>
           ops;
-      ops.SendInitialMetadata(context->send_initial_metadata_,
+      ops.SendInitialMetadata(&context->send_initial_metadata_,
                               context->initial_metadata_flags());
       call_.PerformOps(&ops);
       cq_.Pluck(&ops);
     }
   }
 
-  ClientContext* context_;
+  ::grpc_impl::ClientContext* context_;
   ::grpc::internal::CallOpSet<::grpc::internal::CallOpRecvInitialMetadata,
                               ::grpc::internal::CallOpGenericRecvMessage,
                               ::grpc::internal::CallOpClientRecvStatus>
       finish_ops_;
-  CompletionQueue cq_;
+  ::grpc_impl::CompletionQueue cq_;
   ::grpc::internal::Call call_;
 };
 
@@ -431,7 +433,8 @@ class ClientReaderWriterFactory {
  public:
   static ClientReaderWriter<W, R>* Create(
       ::grpc::ChannelInterface* channel,
-      const ::grpc::internal::RpcMethod& method, ClientContext* context) {
+      const ::grpc::internal::RpcMethod& method,
+      ::grpc_impl::ClientContext* context) {
     return new ClientReaderWriter<W, R>(channel, method, context);
   }
 };
@@ -449,7 +452,7 @@ class ClientReaderWriter final : public ClientReaderWriterInterface<W, R> {
   /// with or after the \a Finish method.
   ///
   /// Once complete, the initial metadata read from the server will be
-  /// accessable through the \a ClientContext used to construct this object.
+  /// accessible through the \a ClientContext used to construct this object.
   void WaitForInitialMetadata() override {
     GPR_CODEGEN_ASSERT(!context_->initial_metadata_received_);
 
@@ -498,11 +501,11 @@ class ClientReaderWriter final : public ClientReaderWriterInterface<W, R> {
       ops.ClientSendClose();
     }
     if (context_->initial_metadata_corked_) {
-      ops.SendInitialMetadata(context_->send_initial_metadata_,
+      ops.SendInitialMetadata(&context_->send_initial_metadata_,
                               context_->initial_metadata_flags());
       context_->set_initial_metadata_corked(false);
     }
-    if (!ops.SendMessage(msg, options).ok()) {
+    if (!ops.SendMessagePtr(&msg, options).ok()) {
       return false;
     }
 
@@ -539,8 +542,8 @@ class ClientReaderWriter final : public ClientReaderWriterInterface<W, R> {
  private:
   friend class internal::ClientReaderWriterFactory<W, R>;
 
-  ClientContext* context_;
-  CompletionQueue cq_;
+  ::grpc_impl::ClientContext* context_;
+  ::grpc_impl::CompletionQueue cq_;
   ::grpc::internal::Call call_;
 
   /// Block to create a stream and write the initial metadata and \a request
@@ -548,7 +551,7 @@ class ClientReaderWriter final : public ClientReaderWriterInterface<W, R> {
   /// used to send to the server when starting the call.
   ClientReaderWriter(::grpc::ChannelInterface* channel,
                      const ::grpc::internal::RpcMethod& method,
-                     ClientContext* context)
+                     ::grpc_impl::ClientContext* context)
       : context_(context),
         cq_(grpc_completion_queue_attributes{
             GRPC_CQ_CURRENT_VERSION, GRPC_CQ_PLUCK, GRPC_CQ_DEFAULT_POLLING,
@@ -557,7 +560,7 @@ class ClientReaderWriter final : public ClientReaderWriterInterface<W, R> {
     if (!context_->initial_metadata_corked_) {
       ::grpc::internal::CallOpSet<::grpc::internal::CallOpSendInitialMetadata>
           ops;
-      ops.SendInitialMetadata(context->send_initial_metadata_,
+      ops.SendInitialMetadata(&context->send_initial_metadata_,
                               context->initial_metadata_flags());
       call_.PerformOps(&ops);
       cq_.Pluck(&ops);
@@ -583,7 +586,7 @@ class ServerReader final : public ServerReaderInterface<R> {
     GPR_CODEGEN_ASSERT(!ctx_->sent_initial_metadata_);
 
     internal::CallOpSet<internal::CallOpSendInitialMetadata> ops;
-    ops.SendInitialMetadata(ctx_->initial_metadata_,
+    ops.SendInitialMetadata(&ctx_->initial_metadata_,
                             ctx_->initial_metadata_flags());
     if (ctx_->compression_level_set()) {
       ops.set_compression_level(ctx_->compression_level());
@@ -607,12 +610,12 @@ class ServerReader final : public ServerReaderInterface<R> {
 
  private:
   internal::Call* const call_;
-  ServerContext* const ctx_;
+  ::grpc_impl::ServerContext* const ctx_;
 
   template <class ServiceType, class RequestType, class ResponseType>
   friend class internal::ClientStreamingHandler;
 
-  ServerReader(internal::Call* call, ServerContext* ctx)
+  ServerReader(internal::Call* call, ::grpc_impl::ServerContext* ctx)
       : call_(call), ctx_(ctx) {}
 };
 
@@ -635,7 +638,7 @@ class ServerWriter final : public ServerWriterInterface<W> {
     GPR_CODEGEN_ASSERT(!ctx_->sent_initial_metadata_);
 
     internal::CallOpSet<internal::CallOpSendInitialMetadata> ops;
-    ops.SendInitialMetadata(ctx_->initial_metadata_,
+    ops.SendInitialMetadata(&ctx_->initial_metadata_,
                             ctx_->initial_metadata_flags());
     if (ctx_->compression_level_set()) {
       ops.set_compression_level(ctx_->compression_level());
@@ -656,11 +659,11 @@ class ServerWriter final : public ServerWriterInterface<W> {
       options.set_buffer_hint();
     }
 
-    if (!ctx_->pending_ops_.SendMessage(msg, options).ok()) {
+    if (!ctx_->pending_ops_.SendMessagePtr(&msg, options).ok()) {
       return false;
     }
     if (!ctx_->sent_initial_metadata_) {
-      ctx_->pending_ops_.SendInitialMetadata(ctx_->initial_metadata_,
+      ctx_->pending_ops_.SendInitialMetadata(&ctx_->initial_metadata_,
                                              ctx_->initial_metadata_flags());
       if (ctx_->compression_level_set()) {
         ctx_->pending_ops_.set_compression_level(ctx_->compression_level());
@@ -681,12 +684,12 @@ class ServerWriter final : public ServerWriterInterface<W> {
 
  private:
   internal::Call* const call_;
-  ServerContext* const ctx_;
+  ::grpc_impl::ServerContext* const ctx_;
 
   template <class ServiceType, class RequestType, class ResponseType>
   friend class internal::ServerStreamingHandler;
 
-  ServerWriter(internal::Call* call, ServerContext* ctx)
+  ServerWriter(internal::Call* call, ::grpc_impl::ServerContext* ctx)
       : call_(call), ctx_(ctx) {}
 };
 
@@ -701,14 +704,14 @@ namespace internal {
 template <class W, class R>
 class ServerReaderWriterBody final {
  public:
-  ServerReaderWriterBody(Call* call, ServerContext* ctx)
+  ServerReaderWriterBody(Call* call, ::grpc_impl::ServerContext* ctx)
       : call_(call), ctx_(ctx) {}
 
   void SendInitialMetadata() {
     GPR_CODEGEN_ASSERT(!ctx_->sent_initial_metadata_);
 
     CallOpSet<CallOpSendInitialMetadata> ops;
-    ops.SendInitialMetadata(ctx_->initial_metadata_,
+    ops.SendInitialMetadata(&ctx_->initial_metadata_,
                             ctx_->initial_metadata_flags());
     if (ctx_->compression_level_set()) {
       ops.set_compression_level(ctx_->compression_level());
@@ -734,11 +737,11 @@ class ServerReaderWriterBody final {
     if (options.is_last_message()) {
       options.set_buffer_hint();
     }
-    if (!ctx_->pending_ops_.SendMessage(msg, options).ok()) {
+    if (!ctx_->pending_ops_.SendMessagePtr(&msg, options).ok()) {
       return false;
     }
     if (!ctx_->sent_initial_metadata_) {
-      ctx_->pending_ops_.SendInitialMetadata(ctx_->initial_metadata_,
+      ctx_->pending_ops_.SendInitialMetadata(&ctx_->initial_metadata_,
                                              ctx_->initial_metadata_flags());
       if (ctx_->compression_level_set()) {
         ctx_->pending_ops_.set_compression_level(ctx_->compression_level());
@@ -759,7 +762,7 @@ class ServerReaderWriterBody final {
 
  private:
   Call* const call_;
-  ServerContext* const ctx_;
+  ::grpc_impl::ServerContext* const ctx_;
 };
 
 }  // namespace internal
@@ -797,7 +800,7 @@ class ServerReaderWriter final : public ServerReaderWriterInterface<W, R> {
 
   friend class internal::TemplatedBidiStreamingHandler<ServerReaderWriter<W, R>,
                                                        false>;
-  ServerReaderWriter(internal::Call* call, ServerContext* ctx)
+  ServerReaderWriter(internal::Call* call, ::grpc_impl::ServerContext* ctx)
       : body_(call, ctx) {}
 };
 
@@ -865,7 +868,7 @@ class ServerUnaryStreamer final
 
   friend class internal::TemplatedBidiStreamingHandler<
       ServerUnaryStreamer<RequestType, ResponseType>, true>;
-  ServerUnaryStreamer(internal::Call* call, ServerContext* ctx)
+  ServerUnaryStreamer(internal::Call* call, ::grpc_impl::ServerContext* ctx)
       : body_(call, ctx), read_done_(false), write_done_(false) {}
 };
 
@@ -925,7 +928,7 @@ class ServerSplitStreamer final
 
   friend class internal::TemplatedBidiStreamingHandler<
       ServerSplitStreamer<RequestType, ResponseType>, false>;
-  ServerSplitStreamer(internal::Call* call, ServerContext* ctx)
+  ServerSplitStreamer(internal::Call* call, ::grpc_impl::ServerContext* ctx)
       : body_(call, ctx), read_done_(false) {}
 };
 
