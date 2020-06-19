@@ -29,17 +29,20 @@ class CSharpGrpcGenerator : public grpc::protobuf::compiler::CodeGenerator {
   CSharpGrpcGenerator() {}
   ~CSharpGrpcGenerator() {}
 
+  uint64_t GetSupportedFeatures() const override {
+    return FEATURE_PROTO3_OPTIONAL;
+  }
+
   bool Generate(const grpc::protobuf::FileDescriptor* file,
                 const grpc::string& parameter,
                 grpc::protobuf::compiler::GeneratorContext* context,
-                grpc::string* error) const {
+                grpc::string* error) const override {
     std::vector<std::pair<grpc::string, grpc::string> > options;
     grpc::protobuf::compiler::ParseGeneratorParameter(parameter, &options);
 
     bool generate_client = true;
     bool generate_server = true;
     bool internal_access = false;
-    bool lite_client = false;
     for (size_t i = 0; i < options.size(); i++) {
       if (options[i].first == "no_client") {
         generate_client = false;
@@ -47,10 +50,6 @@ class CSharpGrpcGenerator : public grpc::protobuf::compiler::CodeGenerator {
         generate_server = false;
       } else if (options[i].first == "internal_access") {
         internal_access = true;
-      } else if (options[i].first == "lite_client") {
-        // will only be used if generate_client is true.
-        // NOTE: experimental option, can be removed in future release
-        lite_client = true;
       } else {
         *error = "Unknown generator option: " + options[i].first;
         return false;
@@ -58,7 +57,7 @@ class CSharpGrpcGenerator : public grpc::protobuf::compiler::CodeGenerator {
     }
 
     grpc::string code = grpc_csharp_generator::GetServices(
-        file, generate_client, generate_server, internal_access, lite_client);
+        file, generate_client, generate_server, internal_access);
     if (code.size() == 0) {
       return true;  // don't generate a file if there are no services
     }

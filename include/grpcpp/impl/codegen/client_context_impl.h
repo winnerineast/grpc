@@ -36,7 +36,6 @@
 
 #include <map>
 #include <memory>
-#include <mutex>
 #include <string>
 
 #include <grpc/impl/codegen/compression_types.h>
@@ -63,10 +62,20 @@ class ChannelInterface;
 
 namespace internal {
 class RpcMethod;
-class CallOpClientRecvStatus;
-class CallOpRecvInitialMetadata;
 template <class InputMessage, class OutputMessage>
 class BlockingUnaryCallImpl;
+class CallOpClientRecvStatus;
+class CallOpRecvInitialMetadata;
+class ServerContextImpl;
+}  // namespace internal
+
+namespace testing {
+class InteropClientContextInspector;
+}  // namespace testing
+}  // namespace grpc
+namespace grpc_impl {
+
+namespace internal {
 template <class InputMessage, class OutputMessage>
 class CallbackUnaryCallImpl;
 template <class Request, class Response>
@@ -76,8 +85,13 @@ class ClientCallbackReaderImpl;
 template <class Request>
 class ClientCallbackWriterImpl;
 class ClientCallbackUnaryImpl;
+class ClientContextAccessor;
 }  // namespace internal
 
+class CallCredentials;
+class Channel;
+class CompletionQueue;
+class ServerContext;
 template <class R>
 class ClientReader;
 template <class W>
@@ -93,16 +107,8 @@ class ClientAsyncReaderWriter;
 template <class R>
 class ClientAsyncResponseReader;
 
-namespace testing {
-class InteropClientContextInspector;
-}  // namespace testing
-}  // namespace grpc
-namespace grpc_impl {
-
-class CallCredentials;
-class Channel;
-class CompletionQueue;
-class ServerContext;
+class ServerContextBase;
+class CallbackServerContext;
 
 /// Options for \a ClientContext::FromServerContext specifying which traits from
 /// the \a ServerContext to propagate (copy) from it into a new \a
@@ -192,6 +198,9 @@ class ClientContext {
   /// server_context, with traits propagated (copied) according to \a options.
   static std::unique_ptr<ClientContext> FromServerContext(
       const grpc_impl::ServerContext& server_context,
+      PropagationOptions options = PropagationOptions());
+  static std::unique_ptr<ClientContext> FromCallbackServerContext(
+      const grpc_impl::CallbackServerContext& server_context,
       PropagationOptions options = PropagationOptions());
 
   /// Add the (\a meta_key, \a meta_value) pair to the metadata associated with
@@ -290,7 +299,8 @@ class ClientContext {
   /// https://tools.ietf.org/html/rfc7540#section-8.1.2.3).
   void set_authority(const grpc::string& authority) { authority_ = authority; }
 
-  /// Return the authentication context for this client call.
+  /// Return the authentication context for the associated client call.
+  /// It is only valid to call this during the lifetime of the client call.
   ///
   /// \see grpc::AuthContext.
   std::shared_ptr<const grpc::AuthContext> auth_context() const {
@@ -307,11 +317,18 @@ class ClientContext {
   /// client’s identity, role, or whether it is authorized to make a particular
   /// call.
   ///
+  /// It is legal to call this only before initial metadata is sent.
+  ///
   /// \see  https://grpc.io/docs/guides/auth.html
   void set_credentials(
-      const std::shared_ptr<grpc_impl::CallCredentials>& creds) {
-    creds_ = creds;
-  }
+      const std::shared_ptr<grpc_impl::CallCredentials>& creds);
+
+  /// EXPERIMENTAL debugging API
+  ///
+  /// Returns the credentials for the client call. This should be used only in
+  /// tests and for diagnostic purposes, and should not be used by application
+  /// logic.
+  std::shared_ptr<grpc_impl::CallCredentials> credentials() { return creds_; }
 
   /// Return the compression algorithm the client call will request be used.
   /// Note that the gRPC runtime may decide to ignore this request, for example,
@@ -340,6 +357,7 @@ class ClientContext {
   }
 
   /// Return the peer uri in a string.
+  /// It is only valid to call this during the lifetime of the client call.
   ///
   /// \warning This value is never authenticated or subject to any security
   /// related code. It must not be used for any authentication related
@@ -348,8 +366,13 @@ class ClientContext {
   /// \return The call's peer URI.
   grpc::string peer() const;
 
-  /// Get and set census context.
+  /// Sets the census context.
+  /// It is only valid to call this before the client call is created. A common
+  /// place of setting census context is from within the DefaultConstructor
+  /// method of GlobalCallbacks.
   void set_census_context(struct census_context* ccp) { census_context_ = ccp; }
+
+  /// Returns the census context that has been set, or nullptr if not set.
   struct census_context* census_context() const {
     return census_context_;
   }
@@ -398,30 +421,31 @@ class ClientContext {
   friend class ::grpc::internal::CallOpRecvInitialMetadata;
   friend class ::grpc_impl::Channel;
   template <class R>
-  friend class ::grpc::ClientReader;
+  friend class ::grpc_impl::ClientReader;
   template <class W>
-  friend class ::grpc::ClientWriter;
+  friend class ::grpc_impl::ClientWriter;
   template <class W, class R>
-  friend class ::grpc::ClientReaderWriter;
+  friend class ::grpc_impl::ClientReaderWriter;
   template <class R>
-  friend class ::grpc::ClientAsyncReader;
+  friend class ::grpc_impl::ClientAsyncReader;
   template <class W>
-  friend class ::grpc::ClientAsyncWriter;
+  friend class ::grpc_impl::ClientAsyncWriter;
   template <class W, class R>
-  friend class ::grpc::ClientAsyncReaderWriter;
+  friend class ::grpc_impl::ClientAsyncReaderWriter;
   template <class R>
-  friend class ::grpc::ClientAsyncResponseReader;
+  friend class ::grpc_impl::ClientAsyncResponseReader;
   template <class InputMessage, class OutputMessage>
   friend class ::grpc::internal::BlockingUnaryCallImpl;
   template <class InputMessage, class OutputMessage>
-  friend class ::grpc::internal::CallbackUnaryCallImpl;
+  friend class ::grpc_impl::internal::CallbackUnaryCallImpl;
   template <class Request, class Response>
-  friend class ::grpc::internal::ClientCallbackReaderWriterImpl;
+  friend class ::grpc_impl::internal::ClientCallbackReaderWriterImpl;
   template <class Response>
-  friend class ::grpc::internal::ClientCallbackReaderImpl;
+  friend class ::grpc_impl::internal::ClientCallbackReaderImpl;
   template <class Request>
-  friend class ::grpc::internal::ClientCallbackWriterImpl;
-  friend class ::grpc::internal::ClientCallbackUnaryImpl;
+  friend class ::grpc_impl::internal::ClientCallbackWriterImpl;
+  friend class ::grpc_impl::internal::ClientCallbackUnaryImpl;
+  friend class ::grpc_impl::internal::ClientContextAccessor;
 
   // Used by friend class CallOpClientRecvStatus
   void set_debug_error_string(const grpc::string& debug_error_string) {
@@ -456,6 +480,10 @@ class ClientContext {
   grpc::string authority() { return authority_; }
 
   void SendCancelToInterceptors();
+
+  static std::unique_ptr<ClientContext> FromInternalServerContext(
+      const grpc_impl::ServerContextBase& server_context,
+      PropagationOptions options);
 
   bool initial_metadata_received_;
   bool wait_for_ready_;

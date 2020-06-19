@@ -32,6 +32,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <random>
@@ -212,6 +213,9 @@ class FlakyNetworkTest : public ::testing::TestWithParam<TestScenario> {
     ClientContext context;
     if (timeout_ms > 0) {
       context.set_deadline(grpc_timeout_milliseconds_to_deadline(timeout_ms));
+      // Allow an RPC to be canceled (for deadline exceeded) after it has
+      // reached the server.
+      request.mutable_param()->set_skip_cancelled_check(true);
     }
     // See https://github.com/grpc/grpc/blob/master/doc/wait-for-ready.md for
     // details of wait-for-ready semantics
@@ -344,8 +348,8 @@ std::vector<TestScenario> CreateTestScenarios() {
   return scenarios;
 }
 
-INSTANTIATE_TEST_CASE_P(FlakyNetworkTest, FlakyNetworkTest,
-                        ::testing::ValuesIn(CreateTestScenarios()));
+INSTANTIATE_TEST_SUITE_P(FlakyNetworkTest, FlakyNetworkTest,
+                         ::testing::ValuesIn(CreateTestScenarios()));
 
 // Network interface connected to server flaps
 TEST_P(FlakyNetworkTest, NetworkTransition) {
@@ -548,7 +552,7 @@ TEST_P(FlakyNetworkTest, ServerRestartKeepaliveDisabled) {
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
-  grpc_test_init(argc, argv);
+  grpc::testing::TestEnvironment env(argc, argv);
   auto result = RUN_ALL_TESTS();
   return result;
 }
